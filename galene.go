@@ -28,7 +28,7 @@ func main() {
 	var udpRange string
 
 	flag.StringVar(&httpAddr, "http", ":8443", "web server `address`")
-	flag.StringVar(&webserver.StaticRoot, "static", "./static/",
+	flag.StringVar(&webserver.StaticRoot, "static", "./galene-astro-client/dist/",
 		"web server root `directory`")
 	flag.BoolVar(&webserver.Insecure, "insecure", false,
 		"act as an HTTP server rather than HTTPS")

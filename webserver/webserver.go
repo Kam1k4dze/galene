@@ -95,7 +95,7 @@ func cspHeader(w http.ResponseWriter, connect string) {
 		c = "connect-src " + connect + " ws: wss: 'self'; "
 	}
 	w.Header().Add("Content-Security-Policy",
-		c+"img-src 'self'; media-src blob: 'self'; script-src 'unsafe-eval' 'self'; default-src 'self'")
+		c+"img-src 'self'; media-src blob: 'self'; script-src 'unsafe-inline' 'unsafe-eval' 'self'; style-src 'unsafe-inline' 'self'; default-src 'self'")
 
 	// Make browser stop sending referrer information
 	w.Header().Add("Referrer-Policy", "no-referrer")
@@ -281,7 +281,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, p string) {
 		return
 	}
 
-	makeCachable(w, p, fi, true)
+	makeCachable(w, p, fi, false)
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
