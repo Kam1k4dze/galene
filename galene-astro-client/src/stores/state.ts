@@ -1,4 +1,5 @@
 import { map, atom } from "nanostores";
+import { persistentAtom, persistentMap } from "../lib/utils";
 
 export type User = {
   username: string;
@@ -42,10 +43,19 @@ export const isMuted = atom<boolean>(true);
 export const isVideoOff = atom<boolean>(true);
 export const audioDevices = atom<MediaDeviceInfo[]>([]);
 export const videoDevices = atom<MediaDeviceInfo[]>([]);
-export const selectedAudioDevice = atom<string | undefined>(undefined);
-export const selectedVideoDevice = atom<string | undefined>(undefined);
+export const selectedAudioDevice = persistentAtom<string | undefined>(
+  "galene-audio-device",
+  undefined
+);
+export const selectedVideoDevice = persistentAtom<string | undefined>(
+  "galene-video-device",
+  undefined
+);
 export const globalError = atom<string | null>(null);
-export const userVolumes = map<Record<string, number>>({});
+export const userVolumes = persistentMap<Record<string, number>>(
+  "galene-user-volumes",
+  {}
+);
 export const localInputAnalyser = atom<AnalyserNode | null>(null);
 export const localOutputAnalyser = atom<AnalyserNode | null>(null);
 export const localAudioCompressor = atom<DynamicsCompressorNode | null>(null);
@@ -65,13 +75,37 @@ export type FileTransferState = {
 export const fileTransfers = map<Record<string, FileTransferState>>({});
 
 // Audio Settings
-export const echoCancellation = atom<boolean>(true);
-export const noiseSuppression = atom<boolean>(true);
-export const autoGainControl = atom<boolean>(true);
-export const compressorEnabled = atom<boolean>(true);
+export const echoCancellation = persistentAtom<boolean>(
+  "galene-echo-cancellation",
+  true
+);
+export const noiseSuppression = persistentAtom<boolean>(
+  "galene-noise-suppression",
+  true
+);
+export const autoGainControl = persistentAtom<boolean>(
+  "galene-auto-gain-control",
+  true
+);
+export const compressorEnabled = persistentAtom<boolean>(
+  "galene-compressor-enabled",
+  false
+); // Default to false for robustness
 
 // Compressor Parameters
-export const compressorThreshold = atom<number>(-24); // dB
-export const compressorRatio = atom<number>(12);
-export const compressorAttack = atom<number>(0.003); // seconds
-export const compressorRelease = atom<number>(0.25); // seconds
+export const compressorThreshold = persistentAtom<number>(
+  "galene-compressor-threshold",
+  -24
+); // dB
+export const compressorRatio = persistentAtom<number>(
+  "galene-compressor-ratio",
+  4
+); // Relaxed from 12
+export const compressorAttack = persistentAtom<number>(
+  "galene-compressor-attack",
+  0.003
+); // seconds
+export const compressorRelease = persistentAtom<number>(
+  "galene-compressor-release",
+  0.25
+); // seconds

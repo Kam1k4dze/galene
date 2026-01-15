@@ -398,7 +398,8 @@ export class GaleneClient {
     chatMessages.set([]);
   }
 
-  private handleFileTransfer(transfer: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private handleFileTransfer(transfer: any) {
     const id = Math.random().toString(36).substring(7);
 
     const updateStatus = (status: string) => {
@@ -577,10 +578,11 @@ export class GaleneClient {
         `Connection lost. Reconnecting... (${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`
       );
 
-      // Clear state during reconnection to avoid stale streams
+      // Clear remote state, but keep local media active for seamless reconnection
       users.set({});
       streams.set({});
-      // We keep localMediaStream and localScreenshareStream to republish them on reconnect
+
+      this.sc = null; // Prevent use of dead connection
 
       setTimeout(() => {
         if (this.lastConnectionParams) {
@@ -622,6 +624,9 @@ export class GaleneClient {
         .forEach((t) => t.stop());
       localScreenshareStream.set(null);
     }
+
+    this.sc = null;
+    this.localUpstreamConnection = null;
 
     resetAudioProcessor();
   }
@@ -681,7 +686,7 @@ export class GaleneClient {
       // Reuse existing localId if available to trigger stream replacement
       const oldLocalId = this.localUpstreamConnection?.localId;
       this.publishStream(combinedStream, "camera", undefined, oldLocalId);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.error("Error getting user media:", e);
       globalError.set(`Failed to access media devices: ${e.message || e.name}`);

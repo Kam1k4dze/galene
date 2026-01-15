@@ -92,89 +92,92 @@ export const updateAudioProcessing = async (
 
   // 1. Apply constraints (Echo, Noise, AGC)
   try {
-    await audioTrack.applyConstraints({
+    const constraints = {
       echoCancellation: echoCancellation.get(),
       noiseSuppression: noiseSuppression.get(),
       autoGainControl: autoGainControl.get(),
-    });
+    };
+    await audioTrack.applyConstraints(constraints);
   } catch (e) {
     console.warn("Failed to apply audio constraints:", e);
   }
 
-  // 2. Handle Compressor (Web Audio API)
-  const useCompressor = compressorEnabled.get();
-  let finalTrack = audioTrack;
-
-  const ctx = getAudioContext();
-  if (ctx) {
-    if (ctx.state === "suspended") {
-      await ctx.resume();
-    }
-
-    if (!processingNodes) {
-      console.log("[AudioProcessing] Creating audio nodes");
-      const source = ctx.createMediaStreamSource(rawStream);
-      const inputAnalyser = ctx.createAnalyser();
-      const compressor = ctx.createDynamicsCompressor();
-      const outputAnalyser = ctx.createAnalyser();
-      const destination = ctx.createMediaStreamDestination();
-
-      // Configure analysers
-      inputAnalyser.fftSize = 2048;
-      inputAnalyser.smoothingTimeConstant = 0.8;
-      outputAnalyser.fftSize = 2048;
-      outputAnalyser.smoothingTimeConstant = 0.8;
-
-      // Chain: Source -> InputAnalyser -> Compressor -> OutputAnalyser -> Destination
-      source.connect(inputAnalyser);
-      inputAnalyser.connect(compressor);
-      compressor.connect(outputAnalyser);
-      outputAnalyser.connect(destination);
-
-      processingNodes = {
-        source,
-        inputAnalyser,
-        compressor,
-        outputAnalyser,
-        destination,
-      };
-      localInputAnalyser.set(inputAnalyser);
-      localOutputAnalyser.set(outputAnalyser);
-      localAudioCompressor.set(compressor);
-
-      // Start local activity detection
-      startLocalActivityDetection();
-    }
-
-    const { compressor, destination } = processingNodes;
-
-    if (useCompressor) {
-      // Update compressor settings
-      const thresh = compressorThreshold.get();
-      const ratio = compressorRatio.get();
-      const attack = compressorAttack.get();
-      const release = compressorRelease.get();
-
-      const now = ctx.currentTime;
-      compressor.threshold.setTargetAtTime(thresh, now, 0.1);
-      compressor.ratio.setTargetAtTime(ratio, now, 0.1);
-      compressor.attack.setTargetAtTime(attack, now, 0.1);
-      compressor.release.setTargetAtTime(release, now, 0.1);
-      compressor.knee.value = 30;
-    } else {
-      // Disable compression (1:1 ratio)
-      const now = ctx.currentTime;
-      compressor.threshold.setTargetAtTime(0, now, 0.1);
-      compressor.ratio.setTargetAtTime(1, now, 0.1);
-    }
-
-    const destTrack = destination.stream.getAudioTracks()[0];
-    if (destTrack) {
-      finalTrack = destTrack;
-    }
+  // 2. If no complex processing is needed, return the raw track.
+  // This bypasses the WebAudio graph for better stability when constraints are enough.
+  if (!compressorEnabled.get() && !localInputAnalyser.get()) {
+    return audioTrack;
   }
 
-  return finalTrack;
+  // If the compressor is disabled, avoid creating the audio graph to minimize processing
+  // and potential audio artifacts. Note that this means visualizers won't work for the local user.
+  if (!compressorEnabled.get()) {
+    return audioTrack;
+  }
+
+  // Create WebAudio graph only if compressor is enabled.
+  const ctx = getAudioContext();
+  if (!ctx) return audioTrack;
+
+  try {
+    if (processingNodes) {
+      // cleanup old nodes?
+      // Reuse or recreate? Recreating is safer for parameter updates.
+      try {
+        processingNodes.source.disconnect();
+        processingNodes.compressor.disconnect();
+        processingNodes.inputAnalyser.disconnect();
+        processingNodes.outputAnalyser.disconnect();
+        // processingNodes.destination.disconnect(); // Don't disconnect dest or we lose the stream?
+      } catch (e) {
+        /**/
+      }
+    }
+
+    const source = ctx.createMediaStreamSource(rawStream);
+    const destination = ctx.createMediaStreamDestination();
+
+    const inputAnalyser = ctx.createAnalyser();
+    inputAnalyser.fftSize = 256;
+    inputAnalyser.smoothingTimeConstant = 0.5;
+
+    const outputAnalyser = ctx.createAnalyser();
+    outputAnalyser.fftSize = 256;
+    outputAnalyser.smoothingTimeConstant = 0.5;
+
+    const compressor = ctx.createDynamicsCompressor();
+    // Apply compressor settings
+    compressor.threshold.value = compressorThreshold.get();
+    compressor.knee.value = 10;
+    compressor.ratio.value = compressorRatio.get();
+    compressor.attack.value = compressorAttack.get();
+    compressor.release.value = compressorRelease.get();
+
+    // Connect graph: Source -> InputAnalyser -> Compressor -> OutputAnalyser -> Destination
+    source.connect(inputAnalyser);
+    inputAnalyser.connect(compressor);
+    compressor.connect(outputAnalyser);
+    outputAnalyser.connect(destination);
+
+    processingNodes = {
+      source,
+      compressor,
+      inputAnalyser,
+      outputAnalyser,
+      destination,
+    };
+
+    localInputAnalyser.set(inputAnalyser);
+    localOutputAnalyser.set(outputAnalyser);
+    localAudioCompressor.set(compressor);
+
+    // Start activity detection
+    startLocalActivityDetection();
+
+    return destination.stream.getAudioTracks()[0];
+  } catch (e) {
+    console.error("Error setting up audio graph:", e);
+    return audioTrack;
+  }
 };
 
 // Subscribe to settings changes
