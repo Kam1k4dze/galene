@@ -60,6 +60,8 @@ export const localInputAnalyser = atom<AnalyserNode | null>(null);
 export const localOutputAnalyser = atom<AnalyserNode | null>(null);
 export const localAudioCompressor = atom<DynamicsCompressorNode | null>(null);
 export const localUserActive = atom<boolean>(false);
+export const isDeafened = atom<boolean>(false);
+export const isHandRaised = atom<boolean>(false);
 
 export type FileTransferState = {
   id: string;
@@ -67,6 +69,7 @@ export type FileTransferState = {
   name: string;
   size: number;
   status: string;
+  progress: number; // bytes transferred (0 when unknown)
   up: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handle: any; // The protocol.js transfer object

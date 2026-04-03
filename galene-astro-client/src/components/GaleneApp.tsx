@@ -218,6 +218,7 @@ export default function GaleneApp() {
               className={
                 showChat ? "text-white" : "text-zinc-400 hover:text-zinc-200"
               }
+              title="Chat"
             >
               <MessageSquare className="h-5 w-5" />
             </Button>

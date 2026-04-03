@@ -8,6 +8,8 @@ import {
   users,
   localPermissions,
   localUserActive,
+  isMuted,
+  isDeafened,
 } from "../../stores/state";
 import { VideoTile } from "./VideoTile";
 
@@ -19,19 +21,8 @@ export function VideoGrid() {
   const userList = useStore(users);
   const myPerms = useStore(localPermissions);
   const amIActive = useStore(localUserActive);
-
-  // We want to show ALL users, not just those with streams.
-  // If a user has a stream, we show it. If not, we show a placeholder tile.
-
-  // Create a map of user ID -> stream(s)
-  // const userStreams: Record<string, any[]> = {};
-  // Object.values(streamList).forEach((s) => {
-  //   // Assuming stream.localId maps to user ID or we can find it.
-  //   // Actually, in Galene, streams are separate entities but associated with users.
-  //   // The `streams` store has `localId` which is the stream ID, not user ID.
-  //   // But `users` store has `streams` property which lists stream IDs.
-  //   // Let's iterate users and find their streams.
-  // });
+  const amIMuted = useStore(isMuted);
+  const amIDeafened = useStore(isDeafened);
 
   return (
     <div className="grid h-full w-full grid-cols-1 gap-4 overflow-y-auto p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 content-start">
@@ -44,6 +35,8 @@ export function VideoGrid() {
           isLocal={true}
           permissions={myPerms}
           isActive={amIActive}
+          isMuted={amIMuted}
+          isDeafened={amIDeafened}
         />
       )}
 
@@ -63,12 +56,22 @@ export function VideoGrid() {
       {Object.entries(userList).map(([userId, user]) => {
         if (userId === myId) return null;
 
-        // Find streams for this user by username
+        // Presence from user data (set via setdata by our custom client)
+        // Falls back to stream inactivity for vanilla clients
+        const data = user.data as Record<string, unknown> | undefined;
+        const remoteMuted: boolean =
+          data?.muted === true ||
+          (data?.muted === undefined &&
+            !Object.values(streamList).some(
+              (s) => s.username === user.username && s.active
+            ));
+        const remoteHandRaised = data?.raisedHand === true;
+        const remoteDeafened = data?.deafened === true;
+
         const userStreams = Object.values(streamList).filter(
           (s) => s.username === user.username
         );
 
-        // If no streams, show placeholder
         if (userStreams.length === 0) {
           return (
             <VideoTile
@@ -77,25 +80,20 @@ export function VideoGrid() {
               userId={userId}
               isLocal={false}
               permissions={user.permissions}
+              isMuted={remoteMuted}
+              isDeafened={remoteDeafened}
+              isHandRaised={remoteHandRaised}
             />
           );
         }
 
-        // Prioritize screenshare, then camera
         const screenshare = userStreams.find((s) => s.label === "screenshare");
         const camera = userStreams.find((s) => s.label === "video" || !s.label);
-
-        // Main stream to display
         const mainStream = screenshare || camera || userStreams[0];
-
-        // Other streams (to be rendered hidden for audio)
-        const otherStreams = userStreams.filter(
-          (s) => s.localId !== mainStream.localId
-        );
+        const otherStreams = userStreams.filter((s) => s.localId !== mainStream.localId);
 
         return (
           <React.Fragment key={userId}>
-            {/* Main visible tile */}
             <VideoTile
               key={mainStream.localId}
               stream={mainStream.stream}
@@ -104,10 +102,11 @@ export function VideoGrid() {
               label={mainStream.label}
               isLocal={false}
               isActive={mainStream.active}
+              isMuted={remoteMuted}
+              isDeafened={remoteDeafened}
+              isHandRaised={remoteHandRaised}
               permissions={user.permissions}
             />
-
-            {/* Hidden tiles for other streams (audio only) */}
             {otherStreams.map((s) => (
               <VideoTile
                 key={s.localId}

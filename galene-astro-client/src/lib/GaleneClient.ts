@@ -12,6 +12,8 @@ import {
   localScreenshareStream,
   isMuted,
   isVideoOff,
+  isDeafened,
+  isHandRaised,
   audioDevices,
   videoDevices,
   selectedAudioDevice,
@@ -23,7 +25,11 @@ import {
   fileTransfers,
 } from "../stores/state";
 import { playDisconnectSound } from "./audio";
-import { updateAudioProcessing, resetAudioProcessor } from "./audio-processor";
+import {
+  updateAudioProcessing,
+  resetAudioProcessor,
+  setProcessedTrackChangedCallback,
+} from "./audio-processor";
 
 export class GaleneClient {
   private sc: ServerConnection | null = null;
@@ -343,7 +349,7 @@ export class GaleneClient {
       });
 
       const threshold = 0.01;
-      const period = 1000;
+      const period = 8000; // 8s silence before showing mic-off indicator
 
       if (maxEnergy > threshold * threshold) {
         c.userdata.lastVoiceActivity = Date.now();
@@ -402,24 +408,33 @@ export class GaleneClient {
   private handleFileTransfer(transfer: any) {
     const id = Math.random().toString(36).substring(7);
 
-    const updateStatus = (status: string) => {
+    const updateState = (status: string, progress?: number) => {
       const current = fileTransfers.get();
-      if (current[id]) {
-        fileTransfers.setKey(id, { ...current[id], status });
-      }
+      if (!current[id]) return;
+      fileTransfers.setKey(id, {
+        ...current[id],
+        status,
+        progress: progress ?? current[id].progress,
+      });
+    };
+
+    const removeAfterDelay = () => {
+      setTimeout(() => {
+        const current = { ...fileTransfers.get() };
+        delete current[id];
+        fileTransfers.set(current);
+      }, 5000);
     };
 
     if (transfer.up) {
       // We are sending
       transfer.onevent = (status: string) => {
-        if (status === "done") {
-          setTimeout(() => {
-            const current = { ...fileTransfers.get() };
-            delete current[id];
-            fileTransfers.set(current);
-          }, 5000);
+        const progress =
+          status === "connected" ? transfer.datalen ?? 0 : undefined;
+        updateState(status, progress);
+        if (status === "done" || status === "cancelled") {
+          removeAfterDelay();
         }
-        updateStatus(status);
       };
     } else {
       // We are receiving
@@ -427,7 +442,9 @@ export class GaleneClient {
       transfer.receive = () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         transfer.onevent = (status: string, data: any) => {
-          updateStatus(status);
+          const progress =
+            status === "connected" ? transfer.datalen ?? 0 : undefined;
+          updateState(status, progress);
           if (status === "done") {
             if (data instanceof Blob) {
               const url = URL.createObjectURL(data);
@@ -439,11 +456,9 @@ export class GaleneClient {
               document.body.removeChild(a);
               URL.revokeObjectURL(url);
             }
-            setTimeout(() => {
-              const current = { ...fileTransfers.get() };
-              delete current[id];
-              fileTransfers.set(current);
-            }, 5000);
+            removeAfterDelay();
+          } else if (status === "cancelled") {
+            removeAfterDelay();
           }
         };
         originalReceive();
@@ -463,7 +478,8 @@ export class GaleneClient {
       sender: transfer.sender,
       name: transfer.name,
       size: transfer.size,
-      status: "pending",
+      status: transfer.up ? "inviting" : "pending",
+      progress: 0,
       up: transfer.up,
       handle: transfer,
     });
@@ -495,13 +511,10 @@ export class GaleneClient {
 
       case "mute":
         if (!privileged) return;
-        const stream = localMediaStream.get();
-        if (stream) {
-          const audioTrack = stream.getAudioTracks()[0];
-          if (audioTrack && audioTrack.enabled) {
-            audioTrack.enabled = false;
-            isMuted.set(true);
-          }
+        if (!isMuted.get()) {
+          isMuted.set(true);
+          this.applyMuteState();
+          this.setPresence({ muted: true });
         }
         globalError.set(`You have been muted by ${from}`);
         break;
@@ -628,7 +641,10 @@ export class GaleneClient {
     this.sc = null;
     this.localUpstreamConnection = null;
 
+    setProcessedTrackChangedCallback(null);
     resetAudioProcessor();
+    isDeafened.set(false);
+    isHandRaised.set(false);
   }
 
   public async joinMedia(audioOnly = true) {
@@ -669,6 +685,10 @@ export class GaleneClient {
 
       this.rawMicStream = stream;
 
+      // Restore per-room mute preference on first join
+      const savedMuted = this.loadMuteState();
+      isMuted.set(savedMuted);
+
       const processedAudioTrack = await updateAudioProcessing(
         this.rawMicStream
       );
@@ -686,6 +706,33 @@ export class GaleneClient {
       // Reuse existing localId if available to trigger stream replacement
       const oldLocalId = this.localUpstreamConnection?.localId;
       this.publishStream(combinedStream, "camera", undefined, oldLocalId);
+
+      // Broadcast initial presence so joining peers see our mute state
+      this.setPresence({
+        muted: isMuted.get(),
+        deafened: isDeafened.get(),
+        raisedHand: isHandRaised.get(),
+      });
+
+      // When audio settings change mid-call, replace the sender's track
+      setProcessedTrackChangedCallback((newTrack) => {
+        if (!this.localUpstreamConnection) return;
+        const sender = this.localUpstreamConnection.pc
+          .getSenders()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .find((s: any) => s.track?.kind === "audio");
+        if (sender) {
+          sender.replaceTrack(newTrack).catch((e: unknown) => {
+            console.error("Failed to replace audio track:", e);
+          });
+          // Also keep localMediaStream in sync
+          const current = localMediaStream.get();
+          if (current) {
+            current.getAudioTracks().forEach((t) => current.removeTrack(t));
+            current.addTrack(newTrack);
+          }
+        }
+      });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.error("Error getting user media:", e);
@@ -737,27 +784,32 @@ export class GaleneClient {
     return c;
   }
 
-  public toggleAudio() {
-    const stream = localMediaStream.get();
-    if (stream) {
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        const newState = !audioTrack.enabled;
-        audioTrack.enabled = newState;
-        isMuted.set(!newState);
-
-        if (this.localUpstreamConnection) {
-          const senders = this.localUpstreamConnection.pc.getSenders();
-          const audioSender = senders.find(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (s: any) => s.track?.kind === "audio"
-          );
-          if (audioSender && audioSender.track) {
-            audioSender.track.enabled = newState;
-          }
-        }
-      }
+  private saveMuteState(muted: boolean) {
+    const group = this.lastConnectionParams?.group;
+    if (group) {
+      try {
+        localStorage.setItem(`galene-muted:${group}`, String(muted));
+      } catch {}
     }
+  }
+
+  private loadMuteState(): boolean {
+    const group = this.lastConnectionParams?.group;
+    if (!group) return true;
+    try {
+      const saved = localStorage.getItem(`galene-muted:${group}`);
+      return saved === null ? true : saved === "true";
+    } catch {
+      return true;
+    }
+  }
+
+  public toggleAudio() {
+    const newMuted = !isMuted.get();
+    isMuted.set(newMuted);
+    this.saveMuteState(newMuted);
+    this.applyMuteState();
+    this.setPresence({ muted: newMuted });
   }
 
   public toggleVideo() {
@@ -833,6 +885,45 @@ export class GaleneClient {
         });
       }
     }
+  }
+
+  /** Broadcast presence data (muted, deafened, raisedHand …) to all peers. */
+  public setPresence(data: Record<string, unknown>) {
+    if (this.sc?.id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.sc as any).userAction("setdata", this.sc.id, data);
+    }
+  }
+
+  public toggleDeafen() {
+    const next = !isDeafened.get();
+    isDeafened.set(next);
+    // isMuted stays unchanged — applyMuteState uses isMuted || isDeafened
+    this.applyMuteState();
+    this.setPresence({ deafened: next, muted: isMuted.get() });
+  }
+
+  /** Applies the actual track state: track is silenced when muted OR deafened. */
+  private applyMuteState() {
+    const shouldMute = isMuted.get() || isDeafened.get();
+    const stream = localMediaStream.get();
+    if (!stream) return;
+    const audioTrack = stream.getAudioTracks()[0];
+    if (!audioTrack) return;
+    audioTrack.enabled = !shouldMute;
+    if (this.localUpstreamConnection) {
+      const sender = this.localUpstreamConnection.pc
+        .getSenders()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .find((s: any) => s.track?.kind === "audio");
+      if (sender?.track) sender.track.enabled = !shouldMute;
+    }
+  }
+
+  public toggleHandRaise() {
+    const next = !isHandRaised.get();
+    isHandRaised.set(next);
+    this.setPresence({ raisedHand: next });
   }
 
   public chat(message: string) {

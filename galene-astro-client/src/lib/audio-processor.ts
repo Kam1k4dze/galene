@@ -180,10 +180,23 @@ export const updateAudioProcessing = async (
   }
 };
 
+// Optional callback invoked with the new processed track whenever settings change.
+// Set by GaleneClient so it can call replaceTrack() on the upstream sender.
+export let onProcessedTrackChanged: ((track: MediaStreamTrack) => void) | null =
+  null;
+
+export const setProcessedTrackChangedCallback = (
+  cb: ((track: MediaStreamTrack) => void) | null
+) => {
+  onProcessedTrackChanged = cb;
+};
+
 // Subscribe to settings changes
-const handleSettingsChange = () => {
-  if (currentRawStream) {
-    updateAudioProcessing(currentRawStream);
+const handleSettingsChange = async () => {
+  if (!currentRawStream) return;
+  const newTrack = await updateAudioProcessing(currentRawStream);
+  if (newTrack && onProcessedTrackChanged) {
+    onProcessedTrackChanged(newTrack);
   }
 };
 
