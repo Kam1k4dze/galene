@@ -643,6 +643,7 @@ export class GaleneClient {
 
     setProcessedTrackChangedCallback(null);
     resetAudioProcessor();
+    this.clearMediaSession();
     isDeafened.set(false);
     isHandRaised.set(false);
   }
@@ -707,6 +708,8 @@ export class GaleneClient {
       const oldLocalId = this.localUpstreamConnection?.localId;
       this.publishStream(combinedStream, "camera", undefined, oldLocalId);
 
+      this.setupMediaSession();
+
       // Broadcast initial presence so joining peers see our mute state
       this.setPresence({
         muted: isMuted.get(),
@@ -731,6 +734,7 @@ export class GaleneClient {
             current.getAudioTracks().forEach((t) => current.removeTrack(t));
             current.addTrack(newTrack);
           }
+          this.applyMuteState();
         }
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -918,6 +922,28 @@ export class GaleneClient {
         .find((s: any) => s.track?.kind === "audio");
       if (sender?.track) sender.track.enabled = !shouldMute;
     }
+  }
+
+  private setupMediaSession() {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "Galene Conference",
+      artist: this.lastConnectionParams?.group || "",
+    });
+    navigator.mediaSession.playbackState = "playing";
+    navigator.mediaSession.setActionHandler("pause", () => {
+      if (!isMuted.get()) this.toggleAudio();
+    });
+    navigator.mediaSession.setActionHandler("play", () => {
+      if (isMuted.get()) this.toggleAudio();
+    });
+  }
+
+  private clearMediaSession() {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = "none";
+    navigator.mediaSession.setActionHandler("pause", null);
+    navigator.mediaSession.setActionHandler("play", null);
   }
 
   public toggleHandRaise() {

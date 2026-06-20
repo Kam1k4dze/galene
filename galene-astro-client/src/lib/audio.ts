@@ -17,6 +17,31 @@ export function getAudioContext() {
   return ctx;
 }
 
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      const ctx = window._galeneAudioContext;
+      if (ctx?.state === "suspended") {
+        ctx.resume().catch(console.error);
+      }
+    }
+  });
+}
+
+const sourceCache = new WeakMap<MediaStream, MediaStreamAudioSourceNode>();
+
+export function getAudioSource(
+  ctx: AudioContext,
+  stream: MediaStream
+): MediaStreamAudioSourceNode {
+  let source = sourceCache.get(stream);
+  if (!source) {
+    source = ctx.createMediaStreamSource(stream);
+    sourceCache.set(stream, source);
+  }
+  return source;
+}
+
 export function playDisconnectSound() {
   const ctx = getAudioContext();
   if (!ctx) return;

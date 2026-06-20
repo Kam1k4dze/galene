@@ -1,4 +1,4 @@
-import { getAudioContext } from "./audio";
+import { getAudioContext, getAudioSource } from "./audio";
 import {
   localInputAnalyser,
   localOutputAnalyser,
@@ -123,7 +123,7 @@ export const updateAudioProcessing = async (
       // cleanup old nodes?
       // Reuse or recreate? Recreating is safer for parameter updates.
       try {
-        processingNodes.source.disconnect();
+        processingNodes.source.disconnect(processingNodes.inputAnalyser);
         processingNodes.compressor.disconnect();
         processingNodes.inputAnalyser.disconnect();
         processingNodes.outputAnalyser.disconnect();
@@ -133,7 +133,7 @@ export const updateAudioProcessing = async (
       }
     }
 
-    const source = ctx.createMediaStreamSource(rawStream);
+    const source = getAudioSource(ctx, rawStream);
     const destination = ctx.createMediaStreamDestination();
 
     const inputAnalyser = ctx.createAnalyser();

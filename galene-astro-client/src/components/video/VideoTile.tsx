@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { MicOff, Shield, Maximize2, Hand, HeadphoneOff } from "lucide-react";
 import { ContextMenu } from "../ui/ContextMenu";
 import { userVolumes, isDeafened } from "../../stores/state";
-import { getAudioContext } from "@/lib/audio";
+import { getAudioContext, getAudioSource } from "@/lib/audio";
 
 interface VideoTileProps {
   stream?: MediaStream;
@@ -62,7 +62,7 @@ export function VideoTile({
 
     let source: MediaStreamAudioSourceNode;
     try {
-      source = ctx.createMediaStreamSource(stream);
+      source = getAudioSource(ctx, stream);
     } catch (e) {
       console.error("Failed to create MediaStreamSource:", e);
       return;
@@ -78,7 +78,7 @@ export function VideoTile({
     if (ctx.state === "suspended") ctx.resume().catch(console.error);
 
     return () => {
-      source.disconnect();
+      source.disconnect(gain);
       gain.disconnect();
       sourceNodeRef.current = null;
       gainNodeRef.current = null;
